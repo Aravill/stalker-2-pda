@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zone PDA Map</title>
+<link rel="stylesheet" href="lib/leaflet.css">
+<style>
+:root{
+  --bg:#0b0c09; --scr:#0e130d; --panel:#141a12; --panel2:#1c2418; --line:#33402a;
+  --text:#cfd6bf; --dim:#7f8a6c; --accent:#e8a838; --accent2:#9fd36a; --danger:#d4523a;
+  --ui:"Bahnschrift SemiCondensed","Bahnschrift","Arial Narrow","Roboto Condensed",sans-serif;
+  --mono:"Consolas","Cascadia Mono","Courier New",monospace;
+  --bez1:#2b2a24; --bez2:#16150f;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.35 var(--mono)}
+/* ---------- device frame ---------- */
+#pda{position:fixed;inset:0;display:flex;flex-direction:column;padding:6px 16px 16px;
+  background:repeating-linear-gradient(45deg,rgba(255,255,255,.012) 0 2px,transparent 2px 4px),
+    radial-gradient(120% 90% at 50% 0%,var(--bez1),var(--bez2));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06),inset 0 0 40px rgba(0,0,0,.7)}
+#pdaTop{flex:none;height:34px;display:flex;align-items:center;gap:14px;color:#8d8a74;font-family:var(--ui);
+  text-transform:uppercase;letter-spacing:.2em;font-size:12px;white-space:nowrap;overflow:hidden}
+.brand{color:#b9b49a;text-shadow:0 1px 0 #000,0 -1px 0 rgba(255,255,255,.08)}
+.brand small{color:#6d6a58;font-size:10px;margin-left:6px}
+#pdaTabs{display:flex;gap:2px;margin-left:12px;align-self:flex-end}
+#pdaTabs span{padding:3px 12px;border:1px solid #3a382e;border-bottom:none;background:#1d1c17;color:#5e5b4b;font-size:11px;cursor:default}
+#pdaTabs .on{color:var(--accent);background:#2a2618;border-color:#6b5524}
+.leds{margin-left:auto;display:flex;gap:6px}
+.led{width:7px;height:7px;border-radius:50%;background:#2a3a1c;box-shadow:inset 0 1px 1px rgba(0,0,0,.6)}
+.led.pwr{background:#8fd14f;box-shadow:0 0 6px #8fd14f}
+.led.sig{background:#e8a838;box-shadow:0 0 5px #e8a838;animation:blink 2.4s steps(1) infinite}
+@keyframes blink{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.led.sig{animation:none}}
+#clock{font-family:var(--mono);color:var(--accent2);font-size:12px;letter-spacing:.08em}
+.screw{width:10px;height:10px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 35%,#6b685a,#24231d 70%);
+  box-shadow:0 1px 1px #000;position:relative}
+.screw::after{content:"";position:absolute;left:2px;right:2px;top:4px;height:2px;background:#151410;transform:rotate(35deg)}
+/* ---------- screen ---------- */
+#screen{flex:1;min-height:0;position:relative;isolation:isolate;display:flex;flex-direction:column;background:var(--scr);
+  border-radius:10px;overflow:hidden;border:2px solid #050605;
+  box-shadow:0 0 0 3px #3b392f,0 0 0 4px #0a0a08,inset 0 0 0 1px rgba(160,200,110,.10)}
+#app{flex:1;min-height:0;position:relative;display:flex}
+#side{width:320px;min-width:320px;background:linear-gradient(#141a12,#10150e);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;overflow:hidden;transition:margin .2s}
+#side.hidden{margin-left:-320px}
+#map{flex:1;position:relative;z-index:0;background:#0a0d09}
+#status{flex:none;height:22px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 10px;
+  background:#0b0f0a;border-top:1px solid var(--line);color:var(--dim);font:11px var(--mono);letter-spacing:.05em;
+  white-space:nowrap;overflow:hidden}
+#status #coords{color:var(--accent2)}
+#net.on{color:var(--accent2)} #net.off{color:var(--danger)}
+/* ---------- screen FX (static, never catches clicks) ---------- */
+/* One static element, promoted to its own GPU layer so it's rasterized once and never repainted while the map moves.
+   (Was 3 stacked layers + a blurred inset shadow + a DOM grid layer — expensive on every pan/zoom frame.) */
+#fx{position:absolute;inset:0;z-index:1200;pointer-events:none;display:none;will-change:transform;transform:translateZ(0);contain:strict;
+  background:
+    radial-gradient(ellipse at center,rgba(0,0,0,0) 62%,rgba(0,0,0,.42) 100%),
+    linear-gradient(115deg,rgba(255,255,255,.035) 0%,rgba(255,255,255,0) 30%),
+    repeating-linear-gradient(to bottom,rgba(0,0,0,0) 0 2px,rgba(0,0,0,.07) 2px 3px),
+    linear-gradient(rgba(160,200,110,.06) 1px,transparent 1px) 0 0/96px 96px,
+    linear-gradient(90deg,rgba(160,200,110,.06) 1px,transparent 1px) 0 0/96px 96px,
+    rgba(110,140,50,.04)}
+body.fx #fx{display:block}
+/* ---------- sidebar ---------- */
+header{padding:12px 14px 10px;border-bottom:1px solid var(--line);background:linear-gradient(#1c2418,#141a12)}
+header h1{margin:0;font:600 15px var(--ui);letter-spacing:.2em;color:var(--accent);text-transform:uppercase}
+header .sub{color:var(--dim);font-size:11px;margin-top:2px}
+.section{padding:10px 14px;border-bottom:1px solid var(--line)}
+.section h2{margin:0 0 8px;font:600 11px var(--ui);letter-spacing:.15em;text-transform:uppercase;color:var(--accent);
+  display:flex;justify-content:space-between;align-items:center}
+.section h2 .ttl{opacity:.85}
+.section h2 .ttl::before{content:"▸ ";color:var(--dim)}
+#count{color:var(--dim);font-family:var(--mono);letter-spacing:.05em}
+.palette{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
+.pal{background:#11160f;border:1px solid var(--line);border-radius:2px;padding:4px 0 2px;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;color:var(--dim);font-size:9px;gap:1px;min-width:0}
+.pal svg{width:26px;height:26px}
+.pal span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;padding:0 2px;
+  font-family:var(--ui);text-transform:uppercase;letter-spacing:.04em}
+.pal:hover{border-color:var(--accent);color:var(--text)}
+.pal.active{border-color:var(--accent);background:#2e2814;color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+#tabs{display:flex;gap:2px;margin-bottom:8px;border-bottom:1px solid var(--line)}
+#tabs button{flex:1;border-radius:2px 2px 0 0;border-bottom:none}
+button,.btn{background:linear-gradient(#232b1e,#181e15);color:var(--text);border:1px solid var(--line);border-radius:2px;
+  padding:5px 8px;font:11.5px var(--ui);text-transform:uppercase;letter-spacing:.08em;cursor:pointer;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+button:hover{border-color:var(--accent)}
+button.on{color:var(--accent);border-color:#7a5f22;background:linear-gradient(#2e2a18,#1f1c12)}
+button.warn:hover{border-color:var(--danger);color:var(--danger)}
+input[type=text],textarea,select{width:100%;background:#0a0e09;color:var(--text);border:1px solid var(--line);
+  border-radius:2px;padding:6px 8px;font:inherit}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent)}
+#hint{color:var(--accent2);font:11px var(--ui);letter-spacing:.04em;min-height:15px;margin-top:6px}
+#listWrap{flex:1;overflow:auto;padding:0 6px 10px;scrollbar-color:#3a4630 transparent;scrollbar-width:thin}
+.item{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:0;border-left:2px solid transparent;cursor:pointer}
+.item:hover{background:var(--panel2);border-left-color:var(--accent)}
+.item svg{width:22px;height:22px;flex:none}
+.item .t{flex:1;min-width:0}
+.item .t b{display:block;font-weight:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .t small{color:var(--dim);font-size:10px}
+.item.dim{opacity:.35}
+.filters{display:flex;gap:4px}
+#filters{flex-direction:column;flex-wrap:nowrap;max-height:34vh;overflow:auto;scrollbar-color:#3a4630 transparent;scrollbar-width:thin}
+.ftop{display:flex;justify-content:space-between;align-items:center;gap:6px;min-height:20px;color:var(--dim);
+  font:10.5px var(--ui);text-transform:uppercase;letter-spacing:.08em}
+.ftop.hid span{color:var(--accent)}
+.ftop button{padding:1px 7px;font-size:10px}
+.fgroup{flex:none;border:1px solid var(--line);border-radius:2px;background:var(--panel2)}
+.fhead{display:flex;align-items:center;gap:6px;padding:3px 6px;font:11px var(--ui);text-transform:uppercase;letter-spacing:.06em}
+.fhead input{margin:0;accent-color:var(--accent);cursor:pointer}
+.fname{flex:1;cursor:pointer;user-select:none} .fname:hover{color:var(--accent)}
+.fcount{color:var(--dim);font:10px var(--mono);letter-spacing:.03em}
+.fexp{padding:0 5px;font-size:10px;line-height:16px;transition:transform .15s} .fgroup:not(.open) .fexp{transform:rotate(-90deg)}
+.fchips{display:none;flex-wrap:wrap;gap:3px;padding:5px 6px 6px;border-top:1px solid var(--line);background:#11160f}
+.fgroup.open .fchips{display:flex}
+.fchip{display:flex;align-items:center;gap:4px;padding:1px 6px 1px 2px;border-radius:2px;font-size:10px;letter-spacing:.04em;
+  background:transparent;color:var(--dim);box-shadow:none}
+.fchip svg{width:14px;height:14px;flex:none;filter:grayscale(1);opacity:.45}
+.fchip.on{color:var(--text);border-color:#7a5f22;background:#1f1c12} .fchip.on svg{filter:none;opacity:1}
+.fchip.zero{opacity:.5}
+.fchip i{font-style:normal;color:var(--dim);font-family:var(--mono)}
+.fchip .only{display:none;font-style:normal;color:var(--accent);border-left:1px solid var(--line);padding-left:4px}
+.fchip:hover .only,.fchip:focus-visible .only{display:inline}
+@media (hover:none){.fchip .only{display:inline}}
+/* sidebar sizing: list keeps >=90px, the filter panel scrolls/shrinks first, tools never get clipped */
+#side > header,#placeSec,#tools{flex:none}
+#markerSec{flex:0 1 auto;min-height:0;display:flex;flex-direction:column}
+#markerSec > *{flex:none}
+#markerSec > #filters{flex:0 1 auto;min-height:48px}
+#listWrap{min-height:90px;flex:1 0 90px}
+/* the sidebar scrolls now, so never squash the markers section (that made the list overlap the search box) */
+#markerSec{flex:none}
+/* very short screens (landscape phone): not everything fits, so let the sidebar scroll instead of overlapping */
+@media (max-height:480px){#side{overflow-y:auto} #markerSec{flex:none} #markerSec > #filters{max-height:110px} #listWrap{flex:none;height:110px}}
+.row{display:flex;gap:6px;flex-wrap:wrap}
+/* when everything can't fit (short screens, long route), the sidebar scrolls instead of clipping */
+#side{overflow-x:hidden;overflow-y:auto;scrollbar-color:#3a4630 transparent;scrollbar-width:thin}
+/* ---------- course plotter ---------- */
+#courseSec{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
+#courseSec .row button{flex:1}
+#paceRow{margin-top:6px}
+#paceRow button{padding:1px 4px;font-size:10px}
+#courseInfo .gt{font-size:9.5px;opacity:.8}
+#coursePts{max-height:132px;overflow:auto;margin-top:6px;scrollbar-color:#3a4630 transparent;scrollbar-width:thin}
+#coursePts:empty{display:none}
+.rstop{display:flex;align-items:center;gap:6px;padding:3px 2px 3px 4px;border-left:2px solid transparent}
+.rstop:hover{background:var(--panel2);border-left-color:var(--accent)}
+.rstop input{margin:0;flex:none;accent-color:var(--accent2);cursor:pointer}
+.rstop.done .rname,.rstop.done .rnum,.rstop.done svg{opacity:.45}
+.rstop.done .rname{text-decoration:line-through}
+.rstop.next{border-left-color:var(--accent);background:rgba(255,190,80,.06)}
+#courseInfo .prog{margin-bottom:5px;padding:4px 6px;border:1px solid var(--line);border-left:2px solid var(--accent2);background:var(--panel2)}
+#courseInfo .prog a{color:var(--accent)}
+#courseInfo .prog button{padding:0 6px;font-size:9.5px;margin-left:4px}
+.rstop svg{width:16px;height:16px;flex:none}
+.rnum{flex:none;width:18px;height:18px;border-radius:50%;border:1px solid var(--accent);color:var(--accent);
+  font:bold 10px var(--mono);display:flex;align-items:center;justify-content:center}
+.rpt{flex:none;width:16px;text-align:center;color:var(--accent2)}
+.rname{flex:1;min-width:0;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
+.rname small{display:block;color:var(--dim);font-size:10px}
+.rstop button{flex:none;padding:0 5px;font-size:10px;line-height:16px}
+.rstop button:disabled{opacity:.3;cursor:default;border-color:var(--line)}
+#courseInfo{margin-top:6px;font:11px var(--ui);letter-spacing:.04em;color:var(--dim)}
+#courseInfo b{color:var(--accent);font-weight:600}
+body.plotting .leaflet-container,body.plotting .leaflet-marker-icon{cursor:crosshair}
+.cs-halo{stroke:#000;stroke-opacity:.55}
+.cs-line{stroke:var(--accent);stroke-opacity:.95;cursor:copy}
+body.plotting .cs-line{cursor:crosshair}
+.cs-rubber{stroke:var(--accent);stroke-opacity:.85}
+.cs-pt{width:18px;height:18px;box-sizing:border-box;border-radius:50%;background:var(--panel);border:2px solid var(--accent);color:var(--accent);
+  font:bold 10px var(--mono);display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px #000;cursor:move}
+.cs-pt.done{border-color:var(--dim);color:var(--accent2);opacity:.75}
+.cs-pt.next{box-shadow:0 0 0 3px rgba(255,190,80,.35),0 1px 3px #000}
+.cs-walked{stroke:#7d8570;stroke-opacity:.95}
+.cs-seg.done{color:var(--dim);border-left-color:var(--dim);opacity:.7}
+.cs-pt.pin{cursor:default;transform:translate(calc((var(--ps,1) - 1) * 9px),calc((1 - var(--ps,1)) * 48px))}
+.cs-seg,.cs-tip{position:absolute;white-space:nowrap;background:rgba(9,12,8,.88);border:1px solid var(--line);border-left:2px solid var(--accent);
+  color:var(--accent);font:600 10px var(--mono);letter-spacing:.03em;padding:1px 5px;pointer-events:none}
+.cs-seg{transform:translate(-50%,-50%)}
+.cs-tip{left:16px;top:10px;color:var(--text)}
+.cs-tip small{color:var(--dim);font-size:9px}
+.cs-tt{background:rgba(9,12,8,.9);color:var(--text);border:1px solid var(--line);font:10px var(--ui);box-shadow:none}
+#expBar{display:flex;align-items:center;gap:5px;margin-bottom:6px}
+#expName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--accent);font:600 12px var(--ui);letter-spacing:.05em;text-transform:uppercase}
+#expName.unsaved{color:var(--dim);font-style:italic}
+#expBar button{flex:none;padding:1px 7px;font-size:10px}
+#expSec{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
+#expList{max-height:200px;overflow:auto;scrollbar-color:#3a4630 transparent;scrollbar-width:thin}
+.exp{display:flex;align-items:center;gap:5px;padding:4px 2px 4px 6px;border-left:2px solid transparent}
+.exp:hover{background:var(--panel2)}
+.exp.on{border-left-color:var(--accent);background:var(--panel2)}
+.exp .en{flex:1;min-width:0;cursor:pointer}
+.exp .en b{display:block;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.exp.on .en b{color:var(--accent)}
+.exp .en small{display:block;color:var(--dim);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.exp button{flex:none;padding:0 5px;font-size:10px;line-height:16px}
+.exp .en small .pg{color:var(--accent)} .exp .en small .ok{color:var(--accent2)}
+.expEmpty{color:var(--dim);font-size:11px;padding:2px 0}
+@media (max-width:700px){#coursePts{max-height:96px} #expList{max-height:140px}}
+#toggleSide{position:absolute;z-index:1000;left:10px;top:10px;box-shadow:0 2px 6px rgba(0,0,0,.6)}
+#side:not(.hidden) ~ #toggleSide{display:none}
+/* ---------- markers ---------- */
+.zm{position:relative}
+.zm svg{width:34px;height:42px;display:block;overflow:visible;pointer-events:auto;
+  transform:scale(var(--ps,1));transform-origin:17px 41px} /* shadow is baked into the SVG (CSS filters re-rasterize every zoom frame) */
+/* pins scale with zoom (--ps set on #map): only the scaled pin itself is clickable, not the full-size box around it */
+.leaflet-marker-icon:has(> .zm){pointer-events:none}
+.leaflet-marker-icon:has(> .zm) .lbl{pointer-events:none}
+.zm .lbl{position:absolute;top:40px;left:50%;transform:translateX(-50%);white-space:nowrap;
+  background:rgba(9,12,8,.86);color:#e6ebd5;border:1px solid rgba(159,211,106,.25);border-left:2px solid var(--accent);
+  border-radius:0;padding:1px 6px;font:600 11px var(--ui);letter-spacing:.05em;text-transform:uppercase;pointer-events:none}
+body.nolabels .zm .lbl{display:none}
+/* "come back here" flag: two staggered rings pulse out of the pin head (head centre = 16px from top at scale 1) */
+.zm .pulse{position:absolute;left:17px;top:calc(41px - 25px * var(--ps,1));width:calc(30px * var(--ps,1));height:calc(30px * var(--ps,1));
+  border-radius:50%;border:2px solid #ffb02e;box-shadow:0 0 8px #ffb02e;pointer-events:none;
+  transform:translate(-50%,-50%) scale(.6);opacity:0;animation:pinPulse 2s ease-out infinite;will-change:transform,opacity}
+.zm .pulse.p2{animation-delay:1s}
+@keyframes pinPulse{0%{transform:translate(-50%,-50%) scale(.6);opacity:.95}100%{transform:translate(-50%,-50%) scale(2.4);opacity:0}}
+@media (prefers-reduced-motion:reduce){.zm .pulse{animation:none;opacity:.8;transform:translate(-50%,-50%) scale(1.3)} .zm .pulse.p2{display:none}}
+.zm.flag svg{filter:drop-shadow(0 0 3px #ffb02e)}
+.zm .lbl .fl{color:#ffb02e;font-weight:800}
+.item .fl{color:#ffb02e}
+.pop .flagBtn{display:block;width:100%;margin-top:8px}
+.pop .flagBtn.on{background:#3a2a0c;border-color:#ffb02e;color:#ffcf73}
+.ftop .fo{margin-left:auto}
+.ftop .fo.on{background:#3a2a0c;border-color:#ffb02e;color:#ffcf73}
+.ftop .fo:disabled{opacity:.35;cursor:default}
+.zm.sel svg{filter:drop-shadow(0 0 4px #ffd36b) drop-shadow(0 0 2px #ffd36b)}
+/* ---------- leaflet chrome ---------- */
+.leaflet-container{font:inherit;cursor:default}
+.placing .leaflet-container{cursor:crosshair}
+.leaflet-popup-content-wrapper{border-radius:2px;background:#11170f;color:var(--text);border:1px solid #3d4b30;
+  border-top:2px solid var(--accent);box-shadow:0 0 0 1px #000,0 10px 28px rgba(0,0,0,.65)}
+.leaflet-popup-tip{background:#11170f;border:1px solid #3d4b30}
+.leaflet-popup-content{margin:10px 12px;width:250px!important}
+.pop label{display:block;color:var(--accent);opacity:.8;font:600 10px var(--ui);letter-spacing:.1em;text-transform:uppercase;margin:6px 0 2px}
+.pop .icons{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;max-height:120px;overflow:auto;
+  background:#0a0e09;border:1px solid var(--line);border-radius:2px;padding:3px}
+.pop .icons div{cursor:pointer;border-radius:2px;display:flex;justify-content:center;padding:1px}
+.pop .icons div.active{background:#2e2814;outline:1px solid var(--accent)}
+.pop .icons svg{width:22px;height:22px}
+.pop .row{margin-top:8px;justify-content:space-between}
+.leaflet-container a.leaflet-popup-close-button{color:var(--dim)}
+.leaflet-control-attribution{background:rgba(14,19,13,.75)!important;color:var(--dim)!important}
+.leaflet-control-attribution a{color:var(--accent)!important}
+.leaflet-control-layers{background:rgba(14,19,13,.92);color:var(--text);border:1px solid var(--line)!important;border-radius:2px;
+  font:11.5px var(--ui);text-transform:uppercase;letter-spacing:.05em}
+.leaflet-control-layers-expanded{padding:6px 10px}
+.leaflet-control-layers-list::before{content:"Map layer";display:block;color:var(--accent);font-size:10px;letter-spacing:.15em;
+  border-bottom:1px solid var(--line);margin-bottom:4px;padding-bottom:2px}
+.leaflet-control-layers-separator{border-top-color:var(--line)!important}
+.leaflet-control-layers label{margin:2px 0;cursor:pointer}
+.leaflet-control-layers input{accent-color:var(--accent)}
+.leaflet-bar{border-radius:2px;border:1px solid var(--line)!important}
+.leaflet-bar a{background:#141a12;color:var(--text);border-color:var(--line);border-radius:0!important}
+.leaflet-bar a:hover{background:var(--panel2)}
+/* ---------- responsive ---------- */
+@media (max-width:700px){
+  #pda{padding:0}
+  #pdaTop{height:28px;padding:0 8px;gap:8px;background:#1a1914;border-bottom:1px solid #000}
+  .screw,.brand small,#pdaTabs span:not(.on){display:none}
+  #screen{border:none;border-radius:0;box-shadow:none}
+  #side{position:absolute;z-index:1001;height:100%}
+  #status #stBase{display:none}
+  #fx::after{background:radial-gradient(ellipse at center,rgba(0,0,0,0) 60%,rgba(0,0,0,.3) 100%)}
+}
+@media (max-width:420px){#pdaTabs{display:none} #clock{font-size:11px}}
+@media (max-height:480px){#pda{padding:0 6px 6px} #pdaTop{height:24px}}
+</style>
+</head>
+<body>
+<div id="pda">
+  <div id="pdaTop">
+    <i class="screw"></i>
+    <span class="brand">ZONE&middot;PDA <small>FIELD UNIT MK-II &middot; FW 4.1</small></span>
+    <nav id="pdaTabs" aria-hidden="true"><span class="on">Map</span><span>Intel</span><span>Comms</span></nav>
+    <span class="leds"><i class="led pwr"></i><i class="led sig"></i></span>
+    <span id="clock">--:--</span>
+    <i class="screw"></i>
+  </div>
+  <div id="screen">
+    <div id="app">
+      <aside id="side">
+        <header>
+          <h1>☢ Field Map</h1>
+          <div class="sub">Custom markers · stored on this device</div>
+        </header>
+        <div class="section" id="placeSec">
+          <h2><span class="ttl">Place marker</span></h2>
+          <div id="tabs"></div>
+          <div class="palette" id="palette"></div>
+          <div id="hint">Pick an icon, then click the map to drop a pin.</div>
+        </div>
+        <div class="section" id="markerSec">
+          <h2><span class="ttl">Markers</span> <span id="count"></span></h2>
+          <input type="text" id="search" placeholder="Search labels & notes…">
+          <div class="filters" id="filters" style="margin-top:6px"></div>
+        </div>
+        <div id="listWrap"><div id="list"></div></div>
+        <div class="section" id="tools" style="border-bottom:0">
+          <h2><span class="ttl">Tools</span></h2>
+          <!-- #toolRow: tool buttons -->
+          <div class="row" id="toolRow">
+            <button id="labelsBtn" class="on" title="Show/hide labels on the map">Labels</button>
+            <button id="fxBtn" class="on" title="Screen effects on/off">FX</button>
+            <button id="exportBtn" title="Download all markers as a JSON file">Export</button>
+            <button id="importBtn" title="Load markers from a JSON file">Import</button>
+            <button id="hideBtn" title="Hide sidebar">◀</button>
+          </div>
+          <!-- #toolExtra: course plotter (manual ruler) -->
+          <div id="toolExtra">
+            <div id="courseSec">
+              <h2><span class="ttl">Course</span> <span id="courseCount"></span></h2>
+              <div id="expBar"><span id="expName" title="Expedition currently open — changes save automatically"></span>
+                <button id="expSave">Save</button><button id="expNew" title="Start a new, empty course">New</button></div>
+              <div class="row">
+                <button id="plotBtn" title="Click the map or pins to lay out a course; right-click / Esc when done">Plot course</button>
+                <button id="undoBtn" title="Remove the last point (Backspace while plotting)">Undo</button>
+                <button id="fitBtn" title="Zoom to the whole course">Fit</button>
+                <button id="courseClear" class="warn" title="Close the course (a saved expedition stays saved)">Clear</button>
+              </div>
+              <div class="row" id="paceRow" title="Pace used for time estimates"></div>
+              <div id="coursePts"></div>
+              <div id="courseInfo"></div>
+            </div>
+            <div id="expSec">
+              <h2><span class="ttl">Expeditions</span> <span id="expCount"></span></h2>
+              <div id="expList"></div>
+            </div>
+          </div>
+          <input type="file" id="file" accept=".json,application/json" hidden>
+        </div>
+      </aside>
+      <button id="toggleSide" title="Show sidebar">☰ Markers</button>
+      <div id="map"></div>
+    </div>
+    <div id="status"><span id="net"></span><span id="coords">X ---.- &middot; Y ---.-</span><span id="stBase"></span></div>
+    <div id="fx" aria-hidden="true"></div>
+  </div>
+</div>
+
+<script src="lib/leaflet.js"></script>
+<script>
+(() => {
+// ---------- icon definitions ----------
+// Each glyph is drawn white inside a 24x24 box that sits in the pin head.
+const G = {
+  danger:'<path d="M12 3 22 20H2Z" fill="none" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"/><path d="M12 9v5" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="17" r="1.4" fill="#fff"/>',
+  radiation:'<circle cx="12" cy="12" r="2.2" fill="#fff"/><path d="M12 12 7.5 4.2A9 9 0 0 1 16.5 4.2Z M12 12 21 12A9 9 0 0 1 16.5 19.8Z M12 12 7.5 19.8A9 9 0 0 1 3 12Z" fill="#fff"/><circle cx="12" cy="12" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/>',
+  loot:'<rect x="3" y="8" width="18" height="12" rx="1.5" fill="none" stroke="#fff" stroke-width="2"/><path d="M3 12h18M10 12v3h4v-3M7 8V5h10v3" fill="none" stroke="#fff" stroke-width="2"/>',
+  stash:'<path d="M6 9a6 6 0 0 1 12 0v11H6Z" fill="none" stroke="#fff" stroke-width="2"/><path d="M9 3.5h6M8 14h8v4H8z" fill="none" stroke="#fff" stroke-width="2"/>',
+  artifact:'<path d="M12 2 19 9 12 22 5 9Z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><path d="M5 9h14M9 9l3 13 3-13-3-7z" fill="none" stroke="#fff" stroke-width="1.3"/>',
+  safe:'<path d="M3 11 12 3l9 8M6 9v11h12V9" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><path d="M10 20v-6h4v6" fill="none" stroke="#fff" stroke-width="2"/>',
+  trader:'<circle cx="12" cy="12" r="9" fill="none" stroke="#fff" stroke-width="2"/><path d="M15 8.5c-.7-.9-1.8-1.3-3-1.3-1.7 0-3 .9-3 2.3 0 3 6 1.7 6 4.8 0 1.4-1.4 2.4-3.1 2.4-1.3 0-2.5-.5-3.2-1.5M12 5.5v13" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>',
+  mutant:'<path d="M12 3c-4.5 0-7.5 3-7.5 7 0 2.4 1 4 2.5 5v3.5h10V15c1.5-1 2.5-2.6 2.5-5 0-4-3-7-7.5-7Z" fill="none" stroke="#fff" stroke-width="2"/><circle cx="9" cy="11" r="1.8" fill="#fff"/><circle cx="15" cy="11" r="1.8" fill="#fff"/><path d="M10 18.5v2M14 18.5v2" stroke="#fff" stroke-width="2"/>',
+  quest:'<path d="m12 2.5 2.9 6 6.6.8-4.9 4.6 1.3 6.6L12 17.2l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8Z" fill="#fff"/>',
+  note:'<rect x="5" y="3" width="14" height="18" rx="1.5" fill="none" stroke="#fff" stroke-width="2"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>',
+  question:'<path d="M8.5 8.5a3.5 3.5 0 1 1 5 3.2c-1 .5-1.5 1.2-1.5 2.3v.8" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="18.5" r="1.5" fill="#fff"/>',
+  door:'<rect x="6" y="3" width="12" height="18" rx="1" fill="none" stroke="#fff" stroke-width="2"/><circle cx="15" cy="12.5" r="1.3" fill="#fff"/><path d="M3 21h18" stroke="#fff" stroke-width="2"/>',
+  // anomalies
+  chemical:'<path d="M12 3s-6 7-6 11a6 6 0 0 0 12 0c0-4-6-11-6-11Z" fill="none" stroke="#fff" stroke-width="2"/><circle cx="10" cy="14.5" r="1.6" fill="#fff"/><circle cx="14" cy="17" r="1.1" fill="#fff"/>',
+  gravity:'<path d="M12 12c0-1.3 1.2-2 2.2-1.6 1.6.6 1.7 3.1.3 4.2-2.2 1.7-5.5.6-6.2-2-1-3.5 1.9-6.6 5.4-6.3 4.7.4 7 5.8 4.6 9.8-2.8 4.7-9.6 5.4-13 1.2" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>',
+  thermal:'<path d="M12 2.5c1 3.5 5.5 5.5 5.5 10.5a5.5 5.5 0 0 1-11 0c0-2.6 1.4-4.2 2.6-5.4.2 1.7 1 2.8 2 3.2-.3-2.7.2-5.8.9-8.3Z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><path d="M12 13.5c1.2 1.2 2 2.2 2 3.3a2 2 0 0 1-4 0c0-1.1.8-2.1 2-3.3Z" fill="#fff"/>',
+  electro:'<path d="M13.5 2 5 13.5h6L9.5 22 19 9.5h-6.5Z" fill="#fff"/>',
+  arch:'<path d="M12 2 22 12 12 22 2 12Z" fill="none" stroke="#fff" stroke-width="2"/><path d="M12 6.5 17.5 12 12 17.5 6.5 12Z" fill="none" stroke="#fff" stroke-width="1.6"/><circle cx="12" cy="12" r="1.8" fill="#fff"/>',
+  psy:'<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="1.1" fill="#fff"/>',
+  emission:'<path d="M3 15a9 9 0 0 1 18 0" fill="none" stroke="#fff" stroke-width="2"/><path d="M7 15a5 5 0 0 1 10 0" fill="none" stroke="#fff" stroke-width="2"/><path d="M2 19h20" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="15" r="1.4" fill="#fff"/>',
+};
+const txt = (s, size) => `<text x="12" y="12.6" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="${size||9}">${s}</text>`;
+
+const CATS = [
+  {id:'gen', name:'General', icons:[
+    ['danger','Danger','#c8412c',G.danger],
+    ['radiation','Radiation','#c9b81e',G.radiation],
+    ['loot','Loot','#3f8f4a',G.loot],
+    ['stash','Stash','#6c8a2f',G.stash],
+    ['artifact','Artifact','#2f8fa8',G.artifact],
+    ['safe','Safe zone','#3a6fb5',G.safe],
+    ['trader','Trader','#b4862a',G.trader],
+    ['mutant','Mutants','#8b2f2f',G.mutant],
+    ['quest','Quest','#d6a13a',G.quest],
+    ['note','Note','#6e6a58',G.note],
+    ['question','Unknown','#7a5aa0',G.question],
+    ['door','Entrance','#5a5a5a',G.door],
+  ]},
+  {id:'fac', name:'Factions', icons:[
+    ['loners','Loners','#4f7a35',txt('LON')],
+    ['duty','Duty','#a3241f',txt('DTY')],
+    ['clearsky','Clear Sky','#2b7bb8',txt('CS',11)],
+    ['freedom','Freedom','#2f8a3c',txt('FRE')],
+    ['ward','Ward','#2d4f7c',txt('WRD')],
+    ['spark','Spark','#c0862a',txt('SPK')],
+    ['monolith','Monolith','#8e9aa3',txt('MON')],
+    ['noon','Noon','#e6d8a8',txt('NOON',7.5).replace('#fff','#3a3220')],
+    ['bandits','Bandits','#3c3c3c',txt('BAN')],
+    ['mercs','Mercs','#5b6b3a',txt('MRC')],
+    ['scientists','Scientists','#d9d9d9',txt('SCI').replace('#fff','#2c2c2c')],
+    ['varta','Military','#6b6340',txt('MIL')],
+  ]},
+  {id:'ano', name:'Anomalies', icons:[
+    ['chemical','Chemical','#7fb52a',G.chemical],
+    ['gravity','Gravitational','#6a4fb0',G.gravity],
+    ['thermal','Thermal / Fire','#d4651c',G.thermal],
+    ['electro','Electro','#2f9fd8',G.electro],
+    ['arch','Arch-anomaly','#b8337a',G.arch],
+    ['psy','Psy','#9b3fbf',G.psy],
+    ['emission','Emission cover','#4a5560',G.emission],
+  ]},
+];
+const ICONS = {};
+CATS.forEach(c => c.icons.forEach(([id,name,color,glyph]) => ICONS[id] = {id,name,color,glyph,cat:c.id}));
+
+function pinSVG(ic){
+  return `<svg viewBox="0 0 34 42" xmlns="http://www.w3.org/2000/svg" style="color:${ic.color}">
+    <path d="M17 41C17 41 3 26 3 16a14 14 0 0 1 28 0c0 10-14 25-14 25Z" transform="translate(0.6 1.8)" fill="#000" fill-opacity=".45"/>
+    <path d="M17 41C17 41 3 26 3 16a14 14 0 0 1 28 0c0 10-14 25-14 25Z" fill="${ic.color}" stroke="#0c0d0a" stroke-width="1.6"/>
+    <path d="M17 41C17 41 3 26 3 16a14 14 0 0 1 28 0" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="1"/>
+    <g transform="translate(6 5) scale(.917)">${ic.glyph}</g></svg>`;
+}
+function badgeSVG(ic){
+  return `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="color:${ic.color}">
+    <circle cx="12" cy="12" r="12" fill="${ic.color}"/><g transform="translate(3 3) scale(.75)">${ic.glyph}</g></svg>`;
+}
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// ---------- storage ----------
+const KEY = 'zonepda.markers.v1', VIEW = 'zonepda.view.v1', PREF = 'zonepda.prefs.v1';
+const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { alert('Could not save: ' + e.message); } };
+let markers = load(KEY, []);
+let prefs = Object.assign({labels:true, fx:true, tab:'gen', hidden:{}, hiddenTypes:{}, filterOpen:{}, course:{pts:[], pace:'walk', activeId:null}}, load(PREF, {}));
+if (!prefs.course || !Array.isArray(prefs.course.pts)) prefs.course = {pts:[], pace:'walk'};
+if (prefs.route) { if (!prefs.course.pts.length && Array.isArray(prefs.route.stops)) prefs.course.pts = prefs.route.stops; delete prefs.route; delete prefs.roads; }   // old route planner -> course
+const course = prefs.course;
+const persist = () => save(KEY, markers);
+const persistPrefs = () => save(PREF, prefs);
+// one-time migration: old per-category filter flags -> per-type flags
+if (CATS.some(c => prefs.hidden[c.id])) {
+  CATS.forEach(c => { if (prefs.hidden[c.id]) c.icons.forEach(([id]) => prefs.hiddenTypes[id] = true); });
+  prefs.hidden = {}; persistPrefs();
+}
+// ---------- per-type filter helpers ----------
+const typeOf = m => (ICONS[m.icon] || ICONS.question).id;
+const typeShown = id => !prefs.hiddenTypes[id];
+const setTypes = (ids, hide) => ids.forEach(id => hide ? prefs.hiddenTypes[id] = true : delete prefs.hiddenTypes[id]);
+function applyFilters(){ persistPrefs(); markers.forEach(applyVisibility); renderList(); } // renderList re-renders filters
+function solo(ids){ // show ONLY these types; repeating when already solo = show all
+  const all = Object.keys(ICONS), isSolo = all.every(id => ids.includes(id) === typeShown(id));
+  prefs.hiddenTypes = {};
+  if (!isSolo) all.forEach(id => { if (!ids.includes(id)) prefs.hiddenTypes[id] = true; });
+  applyFilters();
+}
+function revealType(id){ if (!typeShown(id)) { delete prefs.hiddenTypes[id]; persistPrefs(); markers.forEach(applyVisibility); } }
+
+// ---------- map ----------
+const bounds = [[0,0],[-512,512]];
+const map = L.map('map', {crs:L.CRS.Simple, minZoom:0, maxZoom:8, zoomControl:false, keyboard:false,
+  maxBounds:[[128,-128],[-640,640]], attributionControl:true});
+L.control.zoom({position:'bottomright'}).addTo(map);const ONLINE = 'https://joric.github.io/stalker2_tileset/tiles/{z}/{x}/{y}.jpg';
+const ATTR = 'Map tiles: <a href="https://github.com/joric/stalker2_tileset" target="_blank">joric/stalker2_tileset</a>';
+const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+const BASES = {
+  // 64k main map: zoom 0-5 bundled locally, extra-sharp zoom 6-7 streamed when online.
+  // Some late-game areas (e.g. Iron Forest) are blurry placeholders in this texture.
+  'Detailed map (64k)': L.layerGroup([
+    L.tileLayer('tiles/{z}/{x}/{y}.jpg', {tileSize:512, maxNativeZoom:5, maxZoom:8, bounds, attribution:ATTR}),
+    L.tileLayer(ONLINE, {tileSize:512, minZoom:6, minNativeZoom:6, maxNativeZoom:7, maxZoom:8, bounds, errorTileUrl:BLANK}),
+  ]),
+  // Newer DLC-era map texture: lower resolution, but every area is drawn.
+  'Complete map (16k, all areas)': L.tileLayer('tiles-dlc/{z}/{y}/{x}.webp', {tileSize:512, maxNativeZoom:5, maxZoom:8, bounds, attribution:ATTR}),
+};
+const baseNames = Object.keys(BASES);
+(BASES[prefs.base] ||BASES[baseNames[0]]).addTo(map);
+// ---------- course plotter panes (lines under the pins, numbered handles + labels above) ----------
+map.createPane('course'); map.getPane('course').style.zIndex = 450;
+map.createPane('courseLbl'); Object.assign(map.getPane('courseLbl').style, {zIndex:640, pointerEvents:'none'});
+map.createPane('coursePts'); map.getPane('coursePts').style.zIndex = 645;
+L.control.layers(BASES, null, {position:'topright', collapsed:false}).addTo(map);
+map.on('baselayerchange', e => { prefs.base = e.name; persistPrefs(); document.getElementById('stBase').textContent = e.name; });
+const v = load(VIEW, null);
+if (v) map.setView(v.c, v.z); else map.fitBounds(bounds);
+map.on('moveend', () => save(VIEW, {c:map.getCenter(), z:map.getZoom()}));
+map.on('mousemove', e => coords.textContent = `X ${e.latlng.lng.toFixed(1)} · Y ${(-e.latlng.lat).toFixed(1)} · Z${map.getZoom()}`);
+map.on('mouseout', () => coords.textContent = 'X ---.- · Y ---.-');
+// pin size follows zoom: 2/3 size when zoomed out, growing as you zoom in
+const pinScale = () => document.getElementById('map').style.setProperty('--ps', Math.min(1.15, Math.max(.67, .67 + (map.getZoom() - 2) * .12)).toFixed(3));
+map.on('zoomend', pinScale); pinScale();
+
+// ---------- UI refs ----------
+const $ = id => document.getElementById(id);
+const tabs=$('tabs'), palette=$('palette'), hint=$('hint'), list=$('list'), search=$('search'),
+      filters=$('filters'), count=$('count'), coords=$('coords');
+$('stBase').textContent = BASES[prefs.base] ? prefs.base : baseNames[0];
+// status bar: clock + link state
+const clock = $('clock'), pad = n => String(n).padStart(2, '0');
+const tick = () => { const d = new Date(); clock.textContent = `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}  ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+tick(); setInterval(tick, 15000);
+const net = $('net'), updNet = () => { const on = navigator.onLine;
+  net.textContent = on ? '● LINK: ONLINE' : '○ LINK: OFFLINE (Z≤5)'; net.className = on ? 'on' : 'off'; };
+addEventListener('online', updNet); addEventListener('offline', updNet); updNet();
+let placing = null; // icon id currently armed
+const layers = {};  // marker id -> leaflet marker
+let selected = null;
+
+function renderTabs(){
+  tabs.innerHTML = '';
+  CATS.forEach(c => {
+    const b = document.createElement('button');
+    b.textContent = c.name; b.className = prefs.tab === c.id ? 'on' : '';
+    b.onclick = () => { prefs.tab = c.id; persistPrefs(); renderTabs(); renderPalette(); };
+    tabs.appendChild(b);
+  });
+}
+function renderPalette(){
+  palette.innerHTML = '';
+  CATS.find(c => c.id === prefs.tab).icons.forEach(([id]) => {
+    const ic = ICONS[id], d = document.createElement('div');
+    d.className = 'pal' + (placing === id ? ' active' : '');
+    d.title = ic.name + ' — click, then click the map';
+    d.innerHTML = badgeSVG(ic) + `<span>${esc(ic.name)}</span>`;
+    d.onclick = () => arm(placing === id ? null : id);
+    palette.appendChild(d);
+  });
+}
+function arm(id){
+  if (id && plotting) setPlot(false);   // arming a palette icon leaves course plotting
+  placing = id;
+  document.body.classList.toggle('placing', !!id);
+  hint.textContent = id ? `Placing "${ICONS[id].name}" — click the map (Esc to cancel, Shift-click to keep placing)`
+                          + (typeShown(id) ? '' : ' (type is hidden — it will be shown)')
+                        : 'Pick an icon, then click the map to drop a pin.';
+  renderPalette();
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { arm(null); map.closePopup(); }
+  if ((e.key === 'Delete') && selected && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) removeMarker(selected);
+});
+
+map.on('click', e => {
+  if (!placing) return;
+  const m = {id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    icon: placing, label: ICONS[placing].name, note: '', lat: e.latlng.lat, lng: e.latlng.lng, created: Date.now()};
+  markers.push(m); persist();
+  revealType(placing);
+  addLayer(m); renderList();
+  if (!e.originalEvent.shiftKey) {
+    arm(null);
+    const lm = layers[m.id];
+    lm.once('popupopen', ev => setTimeout(() => {
+      const i = ev.popup.getElement()?.querySelector('.lab'); if (i) { i.focus({preventScroll:true}); i.select(); }
+    }, 120));
+    lm.openPopup();
+  }
+});
+
+function divIcon(m){
+  const ic = ICONS[m.icon] || ICONS.question;
+  return L.divIcon({className:'', iconSize:[34,42], iconAnchor:[17,41], popupAnchor:[0,-38],
+    html:`<div class="zm${selected===m.id?' sel':''}${m.flag?' flag':''}">${m.flag?'<i class="pulse"></i><i class="pulse p2"></i>':''}${pinSVG(ic)}${m.label||m.flag?`<div class="lbl">${m.flag?'<b class="fl">!</b> ':''}${esc(m.label)}</div>`:''}</div>`});
+}
+function addLayer(m){
+  const lm = L.marker([m.lat, m.lng], {icon:divIcon(m), draggable:true, riseOnHover:true, title:m.label});
+  lm.on('dragend', () => { const p = lm.getLatLng(); m.lat = p.lat; m.lng = p.lng; persist(); coursePinMoved(m.id); });
+  lm.on('click', () => { if (plotting) { addPt({pin:m.id, lat:m.lat, lng:m.lng}); return; } select(m.id); });
+  lm.bindPopup(() => popupEl(m), {minWidth:250, autoPanPadding:[40,40]});
+  lm.on('popupopen', () => { if (plotting) lm.closePopup(); });   // plotting: clicking a pin adds a course point, no popup
+  lm.on('popupclose', () => { if (selected === m.id) select(null); });
+  lm.addTo(map); layers[m.id] = lm;
+  applyVisibility(m);
+}
+function refreshLayer(m){ const lm = layers[m.id]; if (lm){ lm.setIcon(divIcon(m)); lm.options.title = m.label; } }
+function select(id){
+  const prev = selected; selected = id;
+  [prev, id].forEach(x => { const m = markers.find(k => k.id === x); m && refreshLayer(m); });
+}
+function popupEl(m){
+  const el = document.createElement('div'); el.className = 'pop';
+  el.innerHTML = `<label>Label</label><input type="text" class="lab" value="${esc(m.label)}" maxlength="80">
+    <label>Notes</label><textarea class="note" rows="3" placeholder="Anything you want to remember…">${esc(m.note)}</textarea>
+    <button type="button" class="flagBtn" title="Pin pulses on the map so you don't forget it">⚑ Come back here</button>
+    <label>Icon</label><div class="icons"></div>
+    <div class="row"><button class="del warn">Delete</button><button class="ok on">Done</button></div>`;
+  const icons = el.querySelector('.icons');
+  Object.values(ICONS).forEach(ic => {
+    const d = document.createElement('div'); d.title = ic.name; d.innerHTML = badgeSVG(ic);
+    if (ic.id === m.icon) d.className = 'active';
+    d.onclick = () => { m.icon = ic.id; revealType(ic.id); persist(); refreshLayer(m); renderList();
+      icons.querySelectorAll('.active').forEach(x => x.className=''); d.className='active'; };
+    icons.appendChild(d);
+  });
+  const lab = el.querySelector('.lab'), note = el.querySelector('.note');
+  lab.oninput = () => { m.label = lab.value; persist(); refreshLayer(m); renderList(); };
+  note.oninput = () => { m.note = note.value; persist(); renderList(); };
+  lab.onkeydown = e => { if (e.key === 'Enter') map.closePopup(); };
+  el.querySelector('.del').onclick = () => removeMarker(m.id);
+  el.querySelector('.ok').onclick = () => map.closePopup();
+  const fb = el.querySelector('.flagBtn'), syncFlag = () => { fb.classList.toggle('on', !!m.flag); fb.textContent = m.flag ? '⚑ Come back here — flagged' : '⚑ Come back here'; };
+  fb.onclick = () => { m.flag = !m.flag; if (!m.flag) delete m.flag; persist(); refreshLayer(m); applyVisibility(m); renderList(); syncFlag(); };
+  syncFlag();
+  L.DomEvent.disableClickPropagation(el); L.DomEvent.disableScrollPropagation(el);
+  return el;
+}
+function removeMarker(id){
+  const m = markers.find(k => k.id === id); if (!m) return;
+  if (!confirm(`Delete marker "${m.label || ICONS[m.icon]?.name}"?`)) return;
+  map.closePopup(); layers[id].remove(); delete layers[id];
+  markers = markers.filter(k => k.id !== id); if (selected === id) selected = null;
+  persist();
+  unpin(m);   // course + expedition points on this pin stay where the pin was
+  renderList(); courseChanged();
+}
+
+// ---------- list + filters ----------
+// Filters: one group per category (tri-state checkbox) with a chip per icon type.
+// Chip click = show/hide that type; Alt+click / right-click / "only" = show ONLY that type (repeat = show all).
+function renderFilters(){
+  const n = {}; markers.forEach(m => { const t = typeOf(m); n[t] = (n[t]||0) + 1; });
+  const hid = Object.keys(prefs.hiddenTypes).length;
+  const nf = markers.filter(m => m.flag).length;
+  filters.innerHTML = `<div class="ftop${hid ? ' hid' : ''}"><span>${hid ? hid + ' type' + (hid>1?'s':'') + ' hidden' : 'All types shown'}</span>${hid ? '<button type="button" class="sa" title="Show every marker type again">Show all</button>' : ''}`
+    + `<button type="button" class="fo${prefs.flagOnly ? ' on' : ''}" title="Show only pins flagged 'Come back here'" ${nf || prefs.flagOnly ? '' : 'disabled'}>⚑ ${nf}</button></div>`;
+  const sa = filters.querySelector('.ftop .sa'); if (sa) sa.onclick = () => { prefs.hiddenTypes = {}; prefs.flagOnly = false; applyFilters(); };
+  filters.querySelector('.ftop .fo').onclick = () => { prefs.flagOnly = !prefs.flagOnly; applyFilters(); };
+  CATS.forEach(c => {
+    const ids = c.icons.map(i => i[0]), on = ids.filter(typeShown);
+    const tot = ids.reduce((s,id) => s + (n[id]||0), 0), vis = on.reduce((s,id) => s + (n[id]||0), 0);
+    const g = document.createElement('div'); g.className = 'fgroup' + (prefs.filterOpen[c.id] ? ' open' : '');
+    g.innerHTML = `<div class="fhead"><input type="checkbox" title="Show/hide whole category"><span class="fname" title="Click: expand · Alt+click / right-click: show only this category">${esc(c.name)}</span><span class="fcount" title="Visible / total markers">${vis}/${tot}</span><button type="button" class="fexp" title="Expand / collapse types">▾</button></div><div class="fchips"></div>`;
+    const cb = g.querySelector('input');
+    cb.checked = on.length === ids.length; cb.indeterminate = on.length > 0 && on.length < ids.length;
+    cb.onchange = () => { setTypes(ids, on.length === ids.length); applyFilters(); };
+    const toggleOpen = () => { prefs.filterOpen[c.id] = !prefs.filterOpen[c.id]; persistPrefs(); g.classList.toggle('open'); };
+    const name = g.querySelector('.fname');
+    name.onclick = e => e.altKey ? solo(ids) : toggleOpen();
+    name.oncontextmenu = e => { e.preventDefault(); solo(ids); };
+    g.querySelector('.fexp').onclick = toggleOpen;
+    const chips = g.querySelector('.fchips');
+    ids.forEach(id => {
+      const ic = ICONS[id], k = n[id] || 0, b = document.createElement('button');
+      b.type = 'button'; b.className = 'fchip' + (typeShown(id) ? ' on' : '') + (k ? '' : ' zero');
+      b.title = `${ic.name} (${k}) — click: show/hide · Alt+click / right-click / "only": show ONLY this type`;
+      b.innerHTML = badgeSVG(ic) + `<span>${esc(ic.name)}</span><i>${k}</i><em class="only">only</em>`;
+      b.onclick = e => (e.altKey || e.target.closest('.only')) ? solo([id]) : (setTypes([id], typeShown(id)), applyFilters());
+      b.oncontextmenu = e => { e.preventDefault(); solo([id]); };
+      chips.appendChild(b);
+    });
+    filters.appendChild(g);
+  });
+}
+function applyVisibility(m){
+  const lm = layers[m.id]; if (!lm) return;
+  const show = typeShown(typeOf(m)) && (!prefs.flagOnly || m.flag); // search never affects the map
+  if (show && !map.hasLayer(lm)) lm.addTo(map);
+  if (!show && map.hasLayer(lm)) lm.remove();
+}
+function renderList(){
+  const q = search.value.trim().toLowerCase();
+  const match = m => !q || (m.label + ' ' + m.note + ' ' + (ICONS[m.icon]?.name||'')).toLowerCase().includes(q);
+  // no search: only visible types; with search: matching hidden-type rows too (dimmed, after visible ones)
+  const vis = m => typeShown(typeOf(m)) && (!prefs.flagOnly || m.flag);
+  const rows = markers.filter(m => match(m) && (q || vis(m)))
+    .sort((a,b) => (vis(b) - vis(a)) || (!!b.flag - !!a.flag) || (a.label||'').localeCompare(b.label||''));
+  count.textContent = markers.length ? `${rows.filter(m => typeShown(typeOf(m))).length}/${markers.length}` : '';
+  list.innerHTML = rows.length ? '' : `<div style="color:var(--dim);padding:10px 8px">${
+    !markers.length ? 'No markers yet. Pick an icon above and click the map.'
+    : q ? 'No matches.'
+    : 'All markers are hidden by filters. <button type="button" class="showall" style="margin-left:4px;padding:1px 7px;font-size:10px">Show all</button>'}</div>`;
+  const sb = list.querySelector('.showall'); if (sb) sb.onclick = () => { prefs.hiddenTypes = {}; applyFilters(); };
+  rows.forEach(m => {
+    const ic = ICONS[m.icon] || ICONS.question, d = document.createElement('div');
+    d.className = 'item' + (typeShown(ic.id) ? '' : ' dim');
+    if (!typeShown(ic.id)) d.title = `${ic.name} is hidden by filters — click to show it`;
+    d.innerHTML = badgeSVG(ic) + `<div class="t"><b>${m.flag ? '<span class="fl">⚑</span> ' : ''}${esc(m.label || ic.name)}</b><small>${esc(ic.name)}${m.note ? ' · ' + esc(m.note.slice(0,60)) : ''}</small></div>`;
+    d.onclick = () => {
+      if (!typeShown(ic.id)) { revealType(ic.id); renderList(); }
+      map.flyTo([m.lat, m.lng], Math.max(map.getZoom(), 4), {duration:.6});
+      map.once('moveend', () => { select(m.id); layers[m.id].openPopup(); });
+    };
+    list.appendChild(d);
+  });
+  renderFilters(); // keep counts in sync (renderFilters must never call renderList)
+  if (course.pts.some(s => s.pin)) renderCourse();   // pin labels/icons shown in the course panel
+}
+search.oninput = renderList;
+
+// ---------- buttons ----------
+function setLabels(on){ prefs.labels = on; persistPrefs(); document.body.classList.toggle('nolabels', !on); $('labelsBtn').classList.toggle('on', on); }
+$('labelsBtn').onclick = () => setLabels(!prefs.labels);
+function setFx(on){ prefs.fx = on; persistPrefs(); document.body.classList.toggle('fx', on); $('fxBtn').classList.toggle('on', on); }
+$('fxBtn').onclick = () => setFx(!prefs.fx);
+$('hideBtn').onclick = () => { $('side').classList.add('hidden'); setTimeout(() => map.invalidateSize(), 220); };
+$('toggleSide').onclick = () => { $('side').classList.remove('hidden'); setTimeout(() => map.invalidateSize(), 220); };
+$('exportBtn').onclick = () => {
+  const blob = new Blob([JSON.stringify({app:'zonepda', version:1, exported:new Date().toISOString(), markers, expeditions:exps}, null, 2)], {type:'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `zone-markers-${new Date().toISOString().slice(0,10)}.json`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$('importBtn').onclick = () => $('file').click();
+$('file').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    const incoming = (Array.isArray(data) ? data : data.markers || []).filter(m => typeof m.lat === 'number' && typeof m.lng === 'number');
+    const inExps = (Array.isArray(data.expeditions) ? data.expeditions : []).filter(x => x && Array.isArray(x.pts));
+    if (!incoming.length && !inExps.length) return alert('No markers found in that file.');
+    const replace = incoming.length && markers.length && confirm(`Import ${incoming.length} markers${inExps.length ? ` and ${inExps.length} expeditions` : ''}.\n\nOK = REPLACE your current ${markers.length} markers\nCancel = MERGE (keep both)`);
+    if (replace) { markers.forEach(unpin); Object.values(layers).forEach(l => l.remove()); for (const k in layers) delete layers[k]; markers = []; }
+    const have = new Set(markers.map(m => m.id));
+    const idMap = {};
+    incoming.forEach(m => { const old = m.id; m.id = m.id && !have.has(m.id) ? String(m.id) : Date.now().toString(36)+Math.random().toString(36).slice(2,8); idMap[old] = m.id;
+      m.icon = ICONS[m.icon] ? m.icon : 'question'; m.label = String(m.label ?? ''); m.note = String(m.note ?? '');
+      markers.push(m); addLayer(m); });
+    inExps.forEach(x => {   // same id = same expedition (e.g. restoring a backup): update it instead of duplicating
+      const i = exps.findIndex(k => k.id === String(x.id)); if (i >= 0) exps.splice(i, 1);
+      exps.push({id: x.id ? String(x.id) : newId(), name: String(x.name || 'Expedition').slice(0, 60),
+      created: Number(x.created) || Date.now(), pts: x.pts.filter(s => s && (Number.isFinite(s.lat) || s.pin)).map(s => s.pin ? {...s, pin: idMap[s.pin] || s.pin} : s)}); });
+    persist(); persistExps(); renderList(); courseChanged();
+    if (inExps.length) alert(`Imported ${incoming.length} markers and ${inExps.length} expedition${inExps.length > 1 ? 's' : ''}.`);
+  } catch (err) { alert('Could not read that file: ' + err.message); }
+};
+
+// ---------- course plotter (manual ruler) ----------
+// Points are {pin:markerId} (follows the pin) or {lat,lng}; saved in prefs.course.pts. Straight legs, each
+// labelled with distance + time at the chosen pace. While plotting, a dashed ruler follows the cursor.
+const MPU = 15.8;   // metres per map unit (approximate)
+// in-game minutes per 500 m. Jog/Sprint is measured in play (500 m ≈ 20 in-game min); Walk is a rough 2x estimate.
+const PACES = {run:['Jog/Sprint', 20, 'jog/sprint'], walk:['Walk', 40, 'walking']};
+if (!PACES[course.pace] || course.paceV !== 2) { course.pace = 'run'; course.paceV = 2; }   // v2: in-game time paces, default to the measured one
+let plotting = false;
+const pinOf = s => s.pin ? markers.find(k => k.id === s.pin) || null : null;
+const ptLL = s => { const m = pinOf(s); if (m) return [m.lat, m.lng];
+  return Number.isFinite(s.lat) && Number.isFinite(s.lng) ? [s.lat, s.lng] : null; };
+const dist2 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+const fmtDist = u => { const m = u * MPU; return m < 1000 ? `${Math.round(m / 5) * 5} m` : `${(m / 1000).toFixed(2)} km`; };
+const fmtTime = (u, per500 = PACES[course.pace][1]) => {   // in-game time
+  const min = Math.max(1, Math.round(u * MPU / 500 * per500));
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${pad(min % 60)} min`; };
+const nextIdx = () => course.pts.findIndex(s => !s.done);   // first point not yet reached
+const legText = u => `${fmtDist(u)} · ${fmtTime(u)}`;
+const courseLen = P => P.slice(1).reduce((s, p, i) => s + dist2(P[i], p), 0);
+
+const courseLayer = L.layerGroup().addTo(map);
+let cs = null;   // live refs of the drawn course: {halo, line, segs:[label markers]}
+const lblIcon = (cls, html) => L.divIcon({className:'', iconSize:[0, 0], html:`<div class="${cls}">${html}</div>`});
+const rubber = L.polyline([], {pane:'course', className:'cs-rubber', weight:2, dashArray:'5 6', interactive:false});
+const rubberTip = L.marker([0, 0], {pane:'courseLbl', interactive:false, keyboard:false, icon:lblIcon('cs-tip', '')});
+
+function drawCourse(){
+  courseLayer.clearLayers(); cs = null;
+  const P = course.pts.map(ptLL);
+  if (P.length > 1) {
+    cs = {halo: L.polyline(P, {pane:'course', className:'cs-halo', weight:8, interactive:false}).addTo(courseLayer),
+          line: L.polyline(P, {pane:'course', className:'cs-line', weight:3, bubblingMouseEvents:false}).addTo(courseLayer), segs:[]};
+    cs.done = [];   // legs ending at a reached point are greyed out
+    for (let i = 1; i < P.length; i++) if (course.pts[i].done)
+      cs.done.push([i, L.polyline([P[i - 1], P[i]], {pane:'course', className:'cs-walked', weight:4, interactive:false}).addTo(courseLayer)]);
+    cs.line.on('click', e => insertAt(e.latlng));
+    cs.line.bindTooltip('Click to add a bend here', {sticky:true, direction:'top', className:'cs-tt'});
+    for (let i = 1; i < P.length; i++)
+      cs.segs.push(L.marker(mid(P[i - 1], P[i]), {pane:'courseLbl', interactive:false, keyboard:false,
+        icon:lblIcon('cs-seg' + (course.pts[i].done ? ' done' : ''), legText(dist2(P[i - 1], P[i])))}).addTo(courseLayer));
+  }
+  const nx = nextIdx();
+  const ptCls = (s, i) => 'cs-pt' + (s.done ? ' done' : '') + (i === nx && course.pts.some(k => k.done) ? ' next' : '');
+  course.pts.forEach((s, i) => {
+    const ll = P[i];
+    if (pinOf(s)) {   // pin stop: number badge beside the pin head, the pin itself stays draggable
+      L.marker(ll, {pane:'courseLbl', interactive:false, keyboard:false, icon:L.divIcon({className:'',
+        html:`<div class="${ptCls(s, i)} pin">${s.done ? '✓' : i + 1}</div>`, iconSize:[18, 18], iconAnchor:[-9, 48]})}).addTo(courseLayer);
+      return;
+    }
+    const h = L.marker(ll, {pane:'coursePts', draggable:true, keyboard:false, bubblingMouseEvents:false,
+      title:'Click: mark reached · drag: move · right-click: remove', icon:L.divIcon({className:'', html:`<div class="${ptCls(s, i)}">${s.done ? '✓' : i + 1}</div>`, iconSize:[18, 18], iconAnchor:[9, 9]})});
+    h.on('drag', () => { const p = h.getLatLng(); s.lat = +p.lat.toFixed(3); s.lng = +p.lng.toFixed(3); liveUpdate(); });
+    h.on('dragend', courseChanged);
+    h.on('click', () => { if (plotting) addPt({lat:s.lat, lng:s.lng}); else { s.done = !s.done; courseChanged(); } });   // plotting: click point 1 to close a loop
+    h.on('contextmenu', e => { L.DomEvent.preventDefault(e.originalEvent); course.pts.splice(i, 1); courseChanged(); });
+    h.addTo(courseLayer);
+  });
+}
+const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+function liveUpdate(){   // cheap redraw while dragging a point: move lines + labels, no rebuild
+  const P = course.pts.map(ptLL);
+  if (cs) { cs.halo.setLatLngs(P); cs.line.setLatLngs(P); cs.done.forEach(([i, pl]) => pl.setLatLngs([P[i - 1], P[i]]));
+    cs.segs.forEach((mk, i) => { mk.setLatLng(mid(P[i], P[i + 1])); const el = mk.getElement()?.firstChild; if (el) el.textContent = legText(dist2(P[i], P[i + 1])); }); }
+  renderCourseInfo(P);
+}
+function insertAt(ll){   // add a bend on the nearest leg
+  const P = course.pts.map(ptLL), q = [ll.lat, ll.lng];
+  let best = 0, bd = Infinity;
+  for (let i = 0; i + 1 < P.length; i++) {
+    const a = P[i], b = P[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+    const t = L2 ? Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / L2)) : 0;
+    const d = dist2(q, [a[0] + t * dx, a[1] + t * dy]); if (d < bd) { bd = d; best = i; }
+  }
+  course.pts.splice(best + 1, 0, {lat:+q[0].toFixed(3), lng:+q[1].toFixed(3)}); courseChanged();
+}
+function addPt(s){ course.pts.push(s); courseChanged(); updateRubber(); }
+function coursePinMoved(id){
+  const m = markers.find(k => k.id === id);
+  if (m) [course.pts, ...exps.map(x => x.pts)].forEach(pts => pts.forEach(s => { if (s.pin === id) { s.lat = m.lat; s.lng = m.lng; } }));
+  if (course.pts.some(s => s.pin === id)) courseChanged(); else { persistExps(); renderExps(); }
+}
+function courseChanged(){
+  course.pts = course.pts.filter(ptLL); persistPrefs();
+  const x = activeExp(); if (x) { x.pts = clonePts(course.pts); persistExps(); }   // the open expedition saves itself
+  drawCourse(); renderCourse(); renderExps();
+}
+
+// ruler that follows the cursor while plotting
+let lastMouse = null;
+function updateRubber(){
+  const P = course.pts.map(ptLL), last = P[P.length - 1];
+  if (!plotting || !last || !lastMouse) { rubber.remove(); rubberTip.remove(); return; }
+  const q = [lastMouse.lat, lastMouse.lng], d = dist2(last, q);
+  rubber.setLatLngs([last, q]); if (!map.hasLayer(rubber)) rubber.addTo(map);
+  rubberTip.setLatLng(q); if (!map.hasLayer(rubberTip)) rubberTip.addTo(map);
+  const el = rubberTip.getElement()?.firstChild;
+  if (el) el.innerHTML = `${legText(d)}` + (P.length > 1 ? `<br><small>total ${legText(courseLen(P) + d)}</small>` : '');
+}
+map.on('mousemove', e => { if (!plotting) return; lastMouse = e.latlng; updateRubber(); });
+map.on('mouseout', () => { lastMouse = null; updateRubber(); });
+
+const plotHint = 'Plotting: click the map or pins to add points · Backspace = undo · right-click / Esc / Enter = done.';
+function setPlot(on){
+  plotting = on; document.body.classList.toggle('plotting', on); $('plotBtn').classList.toggle('on', on);
+  $('plotBtn').textContent = on ? 'Done' : 'Plot course';
+  if (on) { if (placing) arm(null); map.closePopup(); hint.textContent = plotHint; map.doubleClickZoom.disable(); }
+  else { map.doubleClickZoom.enable(); if (!placing && hint.textContent === plotHint) hint.textContent = 'Pick an icon, then click the map to drop a pin.'; }
+  updateRubber();
+}
+function renderCourse(){
+  const st = course.pts, P = st.map(ptLL);
+  $('courseCount').textContent = st.length ? `${st.length} point${st.length > 1 ? 's' : ''}` : '';
+  $('coursePts').innerHTML = st.map((s, i) => {
+    const m = pinOf(s), ic = m && (ICONS[m.icon] || ICONS.question), ll = P[i];
+    const name = m ? esc(m.label || ic.name) : `Point ${ll[1].toFixed(0)}, ${(-ll[0]).toFixed(0)}`;
+    const sub = i ? `<small>+ ${legText(dist2(P[i - 1], ll))}</small>` : '<small>start</small>';
+    return `<div class="rstop${s.done ? ' done' : ''}${i === nextIdx() && st.some(k => k.done) ? ' next' : ''}" data-i="${i}"><input type="checkbox" data-a="done" title="Reached" ${s.done ? 'checked' : ''}><b class="rnum">${i + 1}</b>${m ? badgeSVG(ic) : '<span class="rpt">⌖</span>'}`
+      + `<span class="rname" title="Show on map">${name}${sub}</span>`
+      + `<button type="button" data-a="up" title="Move up" ${i ? '' : 'disabled'}>▲</button>`
+      + `<button type="button" data-a="dn" title="Move down" ${i < st.length - 1 ? '' : 'disabled'}>▼</button>`
+      + `<button type="button" data-a="rm" class="warn" title="Remove point">✕</button></div>`;
+  }).join('');
+  $('paceRow').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.p === course.pace));
+  renderCourseInfo(P);
+}
+function renderCourseInfo(P){
+  const info = $('courseInfo');
+  if (P.length < 2) { info.textContent = P.length ? 'Add another point.' : 'Press Plot course, then click the map / pins.'; return; }
+  const u = courseLen(P), st = course.pts, nd = st.filter(s => s.done).length;
+  let prog = '';
+  if (nd) {
+    const nx = nextIdx(), rem = P.slice(1).reduce((s, p, i) => s + (st[i + 1].done ? 0 : dist2(P[i], p)), 0);
+    if (nx < 0) prog = `<div class="prog">✓ Expedition complete — all ${st.length} points reached <button type="button" id="ckReset">Reset</button></div>`;
+    else { const m = pinOf(st[nx]), nm = m ? esc(m.label || ICONS[m.icon]?.name) : `point ${nx + 1}`;
+      prog = `<div class="prog">${nd}/${st.length} reached · left <b>${fmtDist(rem)}</b> · <b>${fmtTime(rem)}</b>`
+        + `<br>Next: <a href="#" id="ckNext">${nm}</a>${nx ? ' · ' + legText(dist2(P[nx - 1], P[nx])) : ''} <button type="button" id="ckReset" title="Untick all points">Reset</button></div>`; }
+  }
+  info.innerHTML = prog + `Total <b>${fmtDist(u)}</b> · <b>${fmtTime(u)}</b> ${PACES[course.pace][2]}`
+    + `<br>` + Object.entries(PACES).filter(([k]) => k !== course.pace).map(([, [n, per]]) => `${n} ${fmtTime(u, per)}`).join(' · ') + ' <span class="gt">(in-game time)</span>';
+  const rs = $('ckReset'); if (rs) rs.onclick = () => { st.forEach(s => delete s.done); courseChanged(); };
+  const nl = $('ckNext'); if (nl) nl.onclick = e => { e.preventDefault(); const ll = ptLL(st[nextIdx()]); if (ll) map.flyTo(ll, Math.max(map.getZoom(), 4), {duration:.6}); };
+  // keep per-row leg times in sync during drags
+  $('coursePts').querySelectorAll('.rstop small').forEach((sm, i) => { if (i) sm.textContent = '+ ' + legText(dist2(P[i - 1], P[i])); });
+}
+$('paceRow').innerHTML = Object.entries(PACES).map(([k, [n, per]]) => `<button type="button" data-p="${k}" title="≈ ${per} in-game minutes per 500 m">${n}</button>`).join('');
+$('paceRow').onclick = e => { const p = e.target.closest('button')?.dataset.p; if (!p) return; course.pace = p; courseChanged(); updateRubber(); };
+$('coursePts').onclick = e => {
+  const row = e.target.closest('.rstop'); if (!row) return;
+  const i = +row.dataset.i, st = course.pts, a = e.target.closest('button,input')?.dataset.a;
+  if (a === 'done') st[i].done = e.target.checked;
+  else if (a === 'rm') st.splice(i, 1);
+  else if (a === 'up' && i > 0) [st[i - 1], st[i]] = [st[i], st[i - 1]];
+  else if (a === 'dn' && i < st.length - 1) [st[i + 1], st[i]] = [st[i], st[i + 1]];
+  else if (!a) { const ll = ptLL(st[i]); if (ll) map.flyTo(ll, Math.max(map.getZoom(), 4), {duration:.6}); return; }
+  else return;
+  courseChanged();
+};
+$('plotBtn').onclick = () => setPlot(!plotting);
+$('undoBtn').onclick = () => { course.pts.pop(); courseChanged(); updateRubber(); };
+$('fitBtn').onclick = () => { const P = course.pts.map(ptLL); if (P.length) map.fitBounds(L.latLngBounds(P), {padding:[60, 60], maxZoom:6}); };
+$('courseClear').onclick = () => {   // an open expedition is just closed (it stays saved); an unsaved course is discarded
+  if (!activeExp() && course.pts.length > 2 && !confirm('Clear the whole course?')) return;
+  course.activeId = null; course.pts = []; setPlot(false); courseChanged(); };
+map.on('click', e => { if (plotting && !placing) addPt({lat:+e.latlng.lat.toFixed(3), lng:+e.latlng.lng.toFixed(3)}); });
+map.on('contextmenu', () => { if (plotting) setPlot(false); });
+document.addEventListener('keydown', e => {
+  if (!plotting || /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  if (e.key === 'Escape' || e.key === 'Enter') setPlot(false);
+  else if (e.key === 'Backspace') { e.preventDefault(); course.pts.pop(); courseChanged(); updateRubber(); }
+});
+
+// ---------- expeditions (saved, named courses) ----------
+// Stored separately from prefs: [{id, name, created, pts}]. The open one (course.activeId) saves itself on every change.
+const EXP = 'zonepda.expeditions.v1';
+let exps = load(EXP, []); if (!Array.isArray(exps)) exps = [];
+const persistExps = () => save(EXP, exps);
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const activeExp = () => exps.find(x => x.id === course.activeId) || null;
+const clonePts = pts => pts.filter(ptLL).map(s => { const ll = ptLL(s); const o = s.pin ? {pin:s.pin, lat:ll[0], lng:ll[1]} : {lat:s.lat, lng:s.lng}; if (s.done) o.done = true; return o; });
+const fmtDate = ts => { const d = new Date(ts); return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`; };
+function unpin(m){   // a pin is going away: points on it keep its last position
+  [course.pts, ...exps.map(x => x.pts)].forEach(pts => pts.forEach(s => { if (s.pin === m.id) { s.lat = m.lat; s.lng = m.lng; delete s.pin; } }));
+  persistPrefs(); persistExps();
+}
+function expStats(x){
+  const P = x.pts.map(ptLL).filter(Boolean);
+  return {pois: x.pts.filter(s => pinOf(s)).length, pts: P.length, len: courseLen(P), done: x.pts.filter(s => s.done).length};
+}
+function renderExps(){
+  const a = activeExp();
+  $('expName').textContent = a ? a.name : (course.pts.length ? 'Unsaved course' : 'New course');
+  $('expName').classList.toggle('unsaved', !a && course.pts.length > 0);
+  $('expSave').textContent = a ? 'Save copy' : 'Save';
+  $('expSave').title = a ? 'Save this course as a new expedition (copy)' : 'Save this course as a named expedition';
+  $('expCount').textContent = exps.length ? exps.length : '';
+  const rows = exps.slice().sort((p, q) => q.created - p.created);
+  $('expList').innerHTML = rows.length ? rows.map(x => {
+    const s = expStats(x);
+    return `<div class="exp${x.id === course.activeId ? ' on' : ''}" data-id="${esc(x.id)}">`
+      + `<div class="en" title="Open this expedition"><b>${esc(x.name)}</b>`
+      + `<small>${s.pois} PoI${s.pois === 1 ? '' : 's'} · ${s.pts} pts · ${s.pts > 1 ? fmtDist(s.len) + ' · ' + fmtTime(s.len) : '—'}</small>`
+      + `<small>created ${fmtDate(x.created)}${s.done ? ` · <span class="${s.done === x.pts.length ? 'ok' : 'pg'}">${s.done === x.pts.length ? '✓ done' : s.done + '/' + x.pts.length + ' reached'}</span>` : ''}</small></div>`
+      + `<button type="button" data-a="ren" title="Rename">✎</button>`
+      + `<button type="button" data-a="del" class="warn" title="Delete expedition">✕</button></div>`;
+  }).join('') : '<div class="expEmpty">No expeditions yet. Plot a course, then press Save.</div>';
+}
+const askName = (msg, def) => { const n = prompt(msg, def); return n === null ? null : (n.trim().slice(0, 60) || def); };
+const unsavedOk = () => activeExp() || course.pts.length < 2 || confirm('Your current course is not saved as an expedition. Discard it?');
+$('expSave').onclick = () => {
+  if (!course.pts.length) return alert('Plot a course first.');
+  const a = activeExp(), name = askName('Expedition name:', a ? a.name + ' (copy)' : `Expedition ${exps.length + 1}`);
+  if (name === null) return;
+  const x = {id:newId(), name, created:Date.now(), pts:clonePts(course.pts)};
+  exps.push(x); course.activeId = x.id; persistExps(); courseChanged();
+};
+$('expNew').onclick = () => {
+  if (!unsavedOk()) return;
+  course.activeId = null; course.pts = []; setPlot(false); courseChanged(); setPlot(true);
+};
+$('expList').onclick = e => {
+  const row = e.target.closest('.exp'); if (!row) return;
+  const x = exps.find(k => k.id === row.dataset.id), act = e.target.closest('button')?.dataset.a; if (!x) return;
+  if (act === 'ren') { const n = askName('Rename expedition:', x.name); if (n !== null) { x.name = n; persistExps(); renderExps(); } return; }
+  if (act === 'del') {
+    if (!confirm(`Delete expedition "${x.name}"? This cannot be undone.`)) return;
+    exps = exps.filter(k => k !== x);
+    if (course.activeId === x.id) course.activeId = null;   // its course stays on the map as an unsaved course
+    persistExps(); courseChanged(); return;
+  }
+  if (x.id === course.activeId) return $('fitBtn').click();
+  if (!unsavedOk()) return;
+  setPlot(false); course.activeId = x.id; course.pts = clonePts(x.pts); courseChanged(); $('fitBtn').click();
+};
+
+// ---------- boot ----------
+renderTabs(); renderPalette(); renderFilters(); setLabels(prefs.labels); setFx(prefs.fx);
+markers.forEach(addLayer); renderList();
+drawCourse(); renderCourse(); renderExps();
+})();
+</script>
+</body>
+</html>
