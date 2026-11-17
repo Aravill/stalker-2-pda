@@ -52,6 +52,8 @@ COURSE PLOTTER / RULER (Tools section of the sidebar):
                            Right-click a point = remove it straight away.
                            Drag a numbered point to move it; drop it on a pin
                            (the pin glows) and it becomes that pin's waypoint.
+                           Drag a pin's waypoint badge to pull the waypoint
+                           off the pin (the pin itself stays put).
                            Click the line to add a bend there.
   Jog/Sprint / Walk      - pace for the time estimates, in IN-GAME time.
                            Jog/Sprint: ~20 in-game min per 500 m (measured).

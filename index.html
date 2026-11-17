@@ -180,7 +180,7 @@ body.plotting .cs-line{cursor:crosshair}
 .wpm b{display:block;font:600 11px var(--ui);letter-spacing:.05em;text-transform:uppercase;color:var(--accent);margin-bottom:5px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
 .wpm .row{flex-wrap:nowrap}
 .wpm button{padding:2px 8px;font-size:10.5px;white-space:nowrap}
-.cs-pt.pin{cursor:pointer;transform:translate(calc((var(--ps,1) - 1) * 9px),calc((1 - var(--ps,1)) * 48px))}
+.cs-pt.pin{cursor:move;transform:translate(calc((var(--ps,1) - 1) * 9px),calc((1 - var(--ps,1)) * 48px))}
 .cs-seg,.cs-tip{position:absolute;white-space:nowrap;background:rgba(9,12,8,.88);border:1px solid var(--line);border-left:2px solid var(--accent);
   color:var(--accent);font:600 10px var(--mono);letter-spacing:.03em;padding:1px 5px;pointer-events:none}
 .cs-seg{transform:translate(-50%,-50%)}
@@ -774,8 +774,10 @@ function drawCourse(){
   course.pts.forEach((s, i) => {
     const ll = P[i];
     if (pinOf(s)) {   // pin stop: clickable number badge beside the pin head (the pin itself stays draggable)
-      const b = L.marker(ll, {pane:'coursePts', keyboard:false, bubblingMouseEvents:false, title:'Click: waypoint menu · right-click: remove waypoint',
+      const b = L.marker(ll, {pane:'coursePts', draggable:true, keyboard:false, bubblingMouseEvents:false, title:'Click: waypoint menu · drag: move off the pin · right-click: remove waypoint',
         icon:L.divIcon({className:'', html:`<div class="${ptCls(s, i)} pin">${s.done ? '✓' : i + 1}</div>`, iconSize:[18, 18], iconAnchor:[-9, 48]})});
+      // the badge sits up-right of the pin tip; the waypoint follows the badge's centre while dragging
+      dragWp(b, s, mk => { const q = map.latLngToContainerPoint(mk.getLatLng()); return map.containerPointToLatLng(L.point(q.x + 9 + 9 * PS, q.y + 9 - 48 * PS)); });
       b.on('click', () => wpMenu(i, true));
       b.on('contextmenu', e => { L.DomEvent.preventDefault(e.originalEvent); removeWp(i); });
       b.addTo(courseLayer);
@@ -783,17 +785,22 @@ function drawCourse(){
     }
     const h = L.marker(ll, {pane:'coursePts', draggable:true, keyboard:false, bubblingMouseEvents:false,
       title:'Click: waypoint menu · drag: move (drop on a pin to attach) · right-click: remove', icon:L.divIcon({className:'', html:`<div class="${ptCls(s, i)}">${s.done ? '✓' : i + 1}</div>`, iconSize:[18, 18], iconAnchor:[9, 9]})});
-    let snapTo = null;   // pin under the dragged waypoint
-    h.on('drag', () => { const p = h.getLatLng(); snapTo = snapPin(p); snapHi(snapTo);
-      if (snapTo) { s.lat = snapTo.lat; s.lng = snapTo.lng; } else { s.lat = +p.lat.toFixed(3); s.lng = +p.lng.toFixed(3); }
-      liveUpdate(); });
-    h.on('dragend', () => { snapHi(null); if (snapTo) s.pin = snapTo.id; courseChanged(); });   // dropped on a pin = becomes that pin
+    dragWp(h, s, mk => mk.getLatLng());
     h.on('click', () => { if (plotting) addPt({lat:s.lat, lng:s.lng}); else wpMenu(i, false); });   // plotting: click point 1 to close a loop
     h.on('contextmenu', e => { L.DomEvent.preventDefault(e.originalEvent); removeWp(i); });
     h.addTo(courseLayer);
   });
 }
 const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+// drag a waypoint marker: it leaves its pin (if any), and dropping it on a pin attaches it to that pin
+function dragWp(mk, s, pos){
+  let snapTo = null;
+  mk.on('dragstart', () => { delete s.pin; map.closePopup(wpPopup); });
+  mk.on('drag', () => { const p = pos(mk); snapTo = snapPin(p); snapHi(snapTo);
+    if (snapTo) { s.lat = snapTo.lat; s.lng = snapTo.lng; } else { s.lat = +p.lat.toFixed(3); s.lng = +p.lng.toFixed(3); }
+    liveUpdate(); });
+  mk.on('dragend', () => { snapHi(null); if (snapTo) s.pin = snapTo.id; courseChanged(); });
+}
 function removeWp(i){ map.closePopup(wpPopup); course.pts.splice(i, 1); courseChanged(); }
 // small waypoint menu: reached toggle + remove
 const wpPopup = L.popup({className:'wp-pop', closeButton:false, autoPan:false, minWidth:60});

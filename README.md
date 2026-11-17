@@ -50,7 +50,7 @@ Everything is stored in your browser's `localStorage`, on this device and in thi
 | Move a pin | Drag it |
 | Show only one type | Alt-click or right-click a filter chip, or click its "only" |
 | Plot a course | **Plot course**, then click the map or pins. Backspace = undo. Esc, Enter or right-click = done. |
-| Edit a course | Drag points (drop one on a pin to attach it to that pin), click the line to add a bend |
+| Edit a course | Drag points (drop one on a pin to attach it; drag a pin's waypoint badge to pull it off), click the line to add a bend |
 | Waypoint menu | Click a numbered point or a pin's waypoint badge: **Mark reached** / **✕ Remove** (right-click removes it straight away) |
 | Mark a point reached | Tick it in the list, or use its map menu |
 
