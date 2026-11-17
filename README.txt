@@ -46,14 +46,19 @@ COURSE PLOTTER / RULER (Tools section of the sidebar):
                            Backspace = undo last point.
                            Right-click / Esc / Enter / "Done" = stop plotting.
   On the map             - each leg shows its distance and time.
-                           Drag a numbered point to move it, right-click it to
-                           remove it, click the line to add a bend there.
+                           Click a numbered point (also the small badge next
+                           to a pin) for its menu: Mark reached / x Remove.
+                           Removing a pin's waypoint keeps the pin.
+                           Right-click a point = remove it straight away.
+                           Drag a numbered point to move it; drop it on a pin
+                           (the pin glows) and it becomes that pin's waypoint.
+                           Click the line to add a bend there.
   Jog/Sprint / Walk      - pace for the time estimates, in IN-GAME time.
                            Jog/Sprint: ~20 in-game min per 500 m (measured).
                            Walk: ~40 min per 500 m (rough guess).
                            The total also lists the other pace.
-  Checklist              - tick a point's box in the list (or click a numbered
-                           point on the map) when you reach it. Walked legs
+  Checklist              - tick a point's box in the list (or use "Mark
+                           reached" in its map menu) when you reach it. Walked legs
                            turn grey, the next point is highlighted, and the
                            panel shows "N/M reached", distance + time left and
                            the next stop (click it to fly there). Reset unticks
