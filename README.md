@@ -10,7 +10,7 @@ A PDA-styled map of the Zone that starts **empty**. You fill it in yourself as y
 
 > **This is a blind map.** It doesn't know where anything is, and that's the point.
 
-Sites like [Map Genie's STALKER 2 map](https://mapgenie.io/stalker-2) show you every stash, artifact and secret up front. That's great for 100%-ing the game, but it spoils exploring. Zone PDA works the other way round: you get the bare map texture and a set of markers, and **you record what you find, the way a stalker's PDA would**. Nothing is pre-filled or spoiled.
+Sites like Map Genie's STALKER 2 map show you every stash, artifact and secret up front. That's great for 100%-ing the game, but it spoils exploring. Zone PDA works the other way round: you get the bare map texture and a set of markers, and **you record what you find, the way a stalker's PDA would**. Nothing is pre-filled or spoiled.
 
 ## 🤖 Fully vibe coded
 
